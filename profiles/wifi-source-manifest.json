@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "kernel": "7.0.0-42-generic",
+  "ubuntu_source_version": "7.0.0-42.42",
+  "base_commit": "028ef9c96e96197026887c0f092424679298aae8",
+  "base_tag": "v7.0",
+  "sources": {
+    "sdhci-acpi.c": {
+      "url": "https://raw.githubusercontent.com/torvalds/linux/028ef9c96e96197026887c0f092424679298aae8/drivers/mmc/host/sdhci-acpi.c",
+      "sha256": "b60bf26866112c939b295d89cdb65be5a14a27507888298a0c12f52e71bf9124"
+    },
+    "sdhci.h": {
+      "url": "https://raw.githubusercontent.com/torvalds/linux/028ef9c96e96197026887c0f092424679298aae8/drivers/mmc/host/sdhci.h",
+      "sha256": "09a4e8e970f2ef79477ac5cfff4df8d2f39112489572af9990f6a3b8a619dffc"
+    }
+  },
+  "ubuntu_header_sha256": "4b3a252cecc039b22e56c37ec95ad2959bee52934594666708c4a7f118afe4af",
+  "ubuntu_delta": {
+    "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux_7.0.0-42.42.diff.gz",
+    "sha256": "ddf3d32ec073de9bfbdbc5e4fe7aed1a0167d9cf4dd867514ea475a0c5911d59",
+    "scope": "No change to sdhci-acpi.c; sdhci.h changes tuning_err from unsigned int to int."
+  },
+  "patch_sha256": "c04a4afaa1d7e0d118dd1262add6f1c5c112fc2c8b7bf0c5329dd82427b67c33",
+  "build": {
+    "module_name": "miix_sdhci_diag",
+    "jobs": 1,
+    "timeout_seconds": 900
+  },
+  "license": "GPL-2.0-only",
+  "qualification": "Lenovo 80HV only; the exact running Ubuntu kernel must match.",
+  "patched_source_sha256": "3a0376ce60f0f0dbcd1d4920b2ef099c2199c730455cef34aa653984badad30b"
+}

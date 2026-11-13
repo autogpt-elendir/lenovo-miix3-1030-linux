@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=MIIX dashboard
+Comment=Import the graphical environment and start the optional browser
+Exec=/bin/sh -c "systemctl --user import-environment DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE; systemctl --user start miix-kiosk.service"
+OnlyShowIn=LXQt;
+Terminal=false

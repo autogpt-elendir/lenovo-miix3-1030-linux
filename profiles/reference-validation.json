@@ -1,0 +1,38 @@
+{
+  "hardware": "Lenovo MIIX 3-1030 / 80HV",
+  "os": "Ubuntu 26.04.1 LTS / LXQt",
+  "firmware_bits": 32,
+  "kernel": "7.0.0-42-generic",
+  "wifi": {
+    "mode": "legacy 25 MHz, 4 bits, DMA preserved",
+    "previous_live_network_qualification": "association, DHCP, LAN, HTTPS, reboot and USB-dongle-disconnected checks passed",
+    "standalone_builder": "passed on reference tablet",
+    "running_abi_assertions": 116,
+    "rebuilt_module_installed": false
+  },
+  "boot_image": {
+    "generated": true,
+    "format": "PE32 EFI IA32",
+    "new_usb_boot_tested": false
+  },
+  "audio": {
+    "card": "sof-bytcht rt5640",
+    "firmware": "SOF Bay Trail 2.2.0",
+    "speaker_profile": "HiFi Speaker",
+    "software_playback_completed": true,
+    "test_format": "S16_LE / stereo / 48000 Hz",
+    "test_seconds": 0.75,
+    "microphone_recording_performed": false,
+    "acoustic_confirmation": "pending: owner was not present"
+  },
+  "recipe": {
+    "ansible_core": "2.20.11",
+    "community_general": "13.5.1",
+    "controller_python": "3.14",
+    "syntax_check": "passed",
+    "existing_unmanaged_module_refusal": "passed",
+    "check_mode_preview": "passed; 17 ok, 0 failed, production module unchanged",
+    "clean_reinstallation_performed": false
+  },
+  "optional_kiosk_swap": "unit/syntax tested; not deployed by this validation"
+}

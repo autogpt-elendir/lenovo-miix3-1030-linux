@@ -1,0 +1,228 @@
+---
+# Opt-in only: a new, dedicated Btrfs subvolume and one additional swap file.
+- name: Read the root filesystem type for the optional swap
+  ansible.builtin.command:
+    argv: [findmnt, -no, FSTYPE, --target, /]
+  register: _miix_swap_root_type
+  changed_when: false
+  check_mode: false
+
+- name: Limit this recipe to Btrfs
+  ansible.builtin.assert:
+    that:
+      - miix_swap_enabled | bool
+      - _miix_swap_root_type.stdout | trim == 'btrfs'
+    fail_msg: The optional swap recipe supports Btrfs only; leave existing ext4 swap untouched.
+
+- name: Inspect the dedicated subvolume and its ownership marker
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_mime: false
+    checksum_algorithm: sha256
+    get_checksum: "{{ item == '/swap-miix/.miix-reinstall-owned' }}"
+  loop:
+    - /swap-miix
+    - /swap-miix/.miix-reinstall-owned
+    - /swap-miix/swapfile
+  register: _miix_swap_paths
+
+- name: Refuse a pre-existing directory or file not owned by this recipe
+  ansible.builtin.assert:
+    that:
+      - _miix_swap_paths.results[0].stat.isdir | default(false)
+      - not (_miix_swap_paths.results[0].stat.islnk | default(false))
+      - _miix_swap_paths.results[0].stat.uid == 0
+      - _miix_swap_paths.results[1].stat.isreg | default(false)
+      - not (_miix_swap_paths.results[1].stat.islnk | default(false))
+      - _miix_swap_paths.results[1].stat.uid == 0
+      - _miix_swap_paths.results[1].stat.checksum == ('miix3-1030-linux swap schema 1\n' | hash('sha256'))
+    fail_msg: Refusing an unknown existing /swap-miix path; it will not be adopted, resized or overwritten.
+  when: _miix_swap_paths.results[0].stat.exists
+
+- name: Check that the existing directory is a Btrfs subvolume
+  ansible.builtin.command:
+    argv: [btrfs, subvolume, show, /swap-miix]
+  changed_when: false
+  check_mode: false
+  when: _miix_swap_paths.results[0].stat.exists
+
+- name: Refuse a separately mounted path before using the owned subvolume
+  ansible.builtin.command:
+    argv: [findmnt, --json, --target, /swap-miix, --output, 'TARGET,FSTYPE']
+  register: _miix_swap_mount
+  changed_when: false
+  check_mode: false
+  when: _miix_swap_paths.results[0].stat.exists
+
+- name: Require the owned subvolume to belong to the root mount
+  ansible.builtin.assert:
+    that:
+      - (_miix_swap_mount.stdout | from_json).filesystems | length == 1
+      - (_miix_swap_mount.stdout | from_json).filesystems[0].target == '/'
+      - (_miix_swap_mount.stdout | from_json).filesystems[0].fstype == 'btrfs'
+  when: _miix_swap_paths.results[0].stat.exists
+
+- name: Validate any existing swap file without formatting it
+  ansible.builtin.assert:
+    that:
+      - _miix_swap_paths.results[2].stat.isreg | default(false)
+      - not (_miix_swap_paths.results[2].stat.islnk | default(false))
+      - _miix_swap_paths.results[2].stat.uid == 0
+      - _miix_swap_paths.results[2].stat.nlink == 1
+      - _miix_swap_paths.results[2].stat.size == 2147483648
+    fail_msg: Existing swap has an unexpected type, owner or size; no replacement is performed.
+  when: _miix_swap_paths.results[2].stat.exists
+
+- name: Read logical free space before a new allocation
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - "import os; s=os.statvfs('/'); print(s.f_bavail*s.f_frsize)"
+  register: _miix_swap_available
+  changed_when: false
+  check_mode: false
+  when: not _miix_swap_paths.results[2].stat.exists
+
+- name: Read the Btrfs allocation estimate on the tablet storage
+  ansible.builtin.command:
+    argv: [btrfs, filesystem, usage, --raw, /]
+  register: _miix_swap_usage
+  environment:
+    LC_ALL: C
+  changed_when: false
+  check_mode: false
+  when: not _miix_swap_paths.results[2].stat.exists
+
+- name: Keep at least one GiB beyond the two GiB allocation
+  ansible.builtin.assert:
+    that:
+      - _miix_swap_available.stdout | int >= 3221225472
+      - (_miix_swap_usage.stdout | regex_findall('Free \(estimated\):\s+([0-9]+)') | first | int) >= 3221225472
+    fail_msg: Insufficient logical or Btrfs-estimated capacity for extra swap and reserve.
+  when: not _miix_swap_paths.results[2].stat.exists
+
+- name: Read existing active swap paths
+  ansible.builtin.command:
+    argv: [swapon, --show=NAME, --noheadings, --raw]
+  register: _miix_swap_active_before
+  changed_when: false
+  check_mode: false
+
+- name: Create only a new dedicated subvolume
+  ansible.builtin.command:
+    argv: [btrfs, subvolume, create, /swap-miix]
+    creates: /swap-miix
+  register: _miix_swap_subvolume_created
+  when: not _miix_swap_paths.results[0].stat.exists
+
+- name: Refuse an unexpected path that appeared during allocation
+  ansible.builtin.assert:
+    that: _miix_swap_subvolume_created.changed | default(false)
+    fail_msg: The target appeared concurrently and will not be adopted.
+  when:
+    - not ansible_check_mode
+    - not _miix_swap_paths.results[0].stat.exists
+
+- name: Mark only the subvolume created in this invocation
+  ansible.builtin.copy:
+    dest: /swap-miix/.miix-reinstall-owned
+    content: "miix3-1030-linux swap schema 1\n"
+    force: false
+    owner: root
+    group: root
+    mode: '0600'
+  when:
+    - not ansible_check_mode
+    - _miix_swap_subvolume_created.changed | default(false)
+
+- name: Recheck the ownership marker before any file creation
+  ansible.builtin.stat:
+    path: /swap-miix/.miix-reinstall-owned
+    follow: false
+    get_mime: false
+    checksum_algorithm: sha256
+  register: _miix_swap_marker_verified
+  when: not ansible_check_mode
+
+- name: Require the exact marker and owner before allocating swap
+  ansible.builtin.assert:
+    that:
+      - _miix_swap_marker_verified.stat.isreg | default(false)
+      - not (_miix_swap_marker_verified.stat.islnk | default(false))
+      - _miix_swap_marker_verified.stat.uid == 0
+      - _miix_swap_marker_verified.stat.checksum == ('miix3-1030-linux swap schema 1\n' | hash('sha256'))
+  when: not ansible_check_mode
+
+- name: Create a new Btrfs-compatible swap file without overwriting another file
+  ansible.builtin.command:
+    argv: [btrfs, filesystem, mkswapfile, --size, 2G, /swap-miix/swapfile]
+    creates: /swap-miix/swapfile
+  when:
+    - not ansible_check_mode
+    - not _miix_swap_paths.results[0].stat.exists or (_miix_swap_paths.results[1].stat.isreg | default(false))
+
+- name: Protect the owned swap file
+  ansible.builtin.file:
+    path: /swap-miix/swapfile
+    owner: root
+    group: root
+    mode: '0600'
+  when: not ansible_check_mode or _miix_swap_paths.results[2].stat.exists
+
+- name: Verify the Btrfs mapping before activation
+  ansible.builtin.command:
+    argv: [btrfs, inspect-internal, map-swapfile, /swap-miix/swapfile]
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode or _miix_swap_paths.results[2].stat.exists
+
+- name: Inspect the signature without reformatting the owned file
+  ansible.builtin.command:
+    argv: [blkid, -p, -s, TYPE, -o, value, /swap-miix/swapfile]
+  register: _miix_swap_signature
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode or _miix_swap_paths.results[2].stat.exists
+
+- name: Require an actual swap signature
+  ansible.builtin.assert:
+    that: _miix_swap_signature.stdout == 'swap'
+  when: not ansible_check_mode or _miix_swap_paths.results[2].stat.exists
+
+- name: Persist only the additional fstab entry
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^/swap-miix/swapfile\s+'
+    line: '/swap-miix/swapfile none swap defaults,pri=10,nofail 0 0'
+    validate: findmnt --verify --tab-file %s
+  register: _miix_swap_fstab
+
+- name: Reload generated units after the fstab addition
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: _miix_swap_fstab.changed and not ansible_check_mode
+
+- name: Activate only the additional swap
+  ansible.builtin.command:
+    argv: [swapon, --priority, '10', /swap-miix/swapfile]
+  when:
+    - not ansible_check_mode
+    - "'/swap-miix/swapfile' not in _miix_swap_active_before.stdout_lines"
+  changed_when: true
+
+- name: Read active swap paths after the addition
+  ansible.builtin.command:
+    argv: [swapon, --show=NAME, --noheadings, --raw]
+  register: _miix_swap_active_after
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Confirm that existing swap remains active
+  ansible.builtin.assert:
+    that:
+      - "'/swap-miix/swapfile' in _miix_swap_active_after.stdout_lines"
+      - _miix_swap_active_before.stdout_lines | difference(_miix_swap_active_after.stdout_lines) | length == 0
+  when: not ansible_check_mode

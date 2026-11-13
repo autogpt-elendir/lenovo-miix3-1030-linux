@@ -1,0 +1,40 @@
+---
+- name: Require an explicitly enabled kiosk and an active user session
+  ansible.builtin.assert:
+    that:
+      - miix_kiosk_enabled | bool
+      - miix_kiosk_memory_guard_enabled | bool
+      - _miix_user_bus.stat.exists
+    fail_msg: Log in to the tablet desktop and enable the kiosk before enabling its memory guard.
+
+- name: Create the user's systemd unit directory
+  ansible.builtin.file:
+    path: "{{ miix_user_home }}/.config/systemd/user"
+    state: directory
+    owner: "{{ miix_user }}"
+    group: "{{ miix_user_gid }}"
+    mode: '0700'
+
+- name: Install the optional memory observation units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ miix_user_home }}/.config/systemd/user/{{ item }}"
+    owner: "{{ miix_user }}"
+    group: "{{ miix_user_gid }}"
+    mode: '0644'
+  loop:
+    - miix-kiosk-memory-guard.service
+    - miix-kiosk-memory-guard.timer
+  register: _miix_memory_units
+
+- name: Enable the optional timer without restarting the browser
+  ansible.builtin.systemd_service:
+    name: miix-kiosk-memory-guard.timer
+    scope: user
+    daemon_reload: "{{ _miix_memory_units.changed }}"
+    enabled: true
+    state: started
+  become: true
+  become_user: "{{ miix_user }}"
+  environment: "{{ miix_user_environment }}"
+  when: not ansible_check_mode

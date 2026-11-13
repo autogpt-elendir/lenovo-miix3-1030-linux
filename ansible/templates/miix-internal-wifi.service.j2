@@ -1,0 +1,17 @@
+[Unit]
+Description=Lenovo MIIX 3-1030 qualified internal Wi-Fi setup
+After=systemd-modules-load.service systemd-udev-trigger.service
+Before=NetworkManager.service
+ConditionKernelVersion={{ miix_kernel }}
+ConditionPathExists=/sys/bus/platform/devices/INT33BB:00
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/miix-internal-wifi start
+ExecStop=/usr/local/libexec/miix-internal-wifi stop
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,135 @@
+Subject: [LOCAL] mmc: isolate legacy SDIO setup on Lenovo MIIX 80HV
+
+Keep the stock host driver for storage and bind this host manually.
+Limit Wi-Fi to legacy timing before card detection; preserve DMA.
+Base: commit 028ef9c96e96197026887c0f092424679298aae8 ("Linux 7.0")
+Private layout is checked against the running Ubuntu 7.0.0-42 kernel BTF.
+
+---
+
+--- a/sdhci-acpi.c
++++ b/sdhci-acpi.c
+@@ -9,6 +9,8 @@
+ #include <linux/init.h>
+ #include <linux/export.h>
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
++#include <linux/string.h>
+ #include <linux/device.h>
+ #include <linux/pinctrl/pinconf-generic.h>
+ #include <linux/platform_device.h>
+@@ -37,6 +39,17 @@
+ #endif
+
+ #include "sdhci.h"
++#include "sdhci_abi_asserts.h"
++
++#define MIIX_SDIO_MAX_CLOCK_HZ 25000000U
++
++static bool legacy = true;
++module_param(legacy, bool, 0400);
++MODULE_PARM_DESC(legacy, "Limit the guarded Wi-Fi host to legacy SDIO at 25 MHz");
++
++static bool pio;
++module_param(pio, bool, 0400);
++MODULE_PARM_DESC(pio, "Disable DMA only on the guarded Wi-Fi host");
+
+ enum {
+ 	SDHCI_ACPI_SD_CD		= BIT(0),
+@@ -703,24 +716,7 @@
+ 	{ },
+ };
+
+-static const struct acpi_device_id sdhci_acpi_ids[] = {
+-	{ "80865ACA" },
+-	{ "80865ACC" },
+-	{ "80865AD0" },
+-	{ "80860F14" },
+-	{ "80860F16" },
+-	{ "INT33BB"  },
+-	{ "INT33C6"  },
+-	{ "INT3436"  },
+-	{ "INT344D"  },
+-	{ "PNP0D40"  },
+-	{ "QCOM8051" },
+-	{ "QCOM8052" },
+-	{ "AMDI0040" },
+-	{ "AMDI0041" },
+-	{ },
+-};
+-MODULE_DEVICE_TABLE(acpi, sdhci_acpi_ids);
++/* Deliberately no match/alias table: bind only through driver_override. */
+
+ /* Please keep this list sorted alphabetically */
+ static const struct dmi_system_id sdhci_acpi_quirks[] = {
+@@ -826,8 +822,14 @@
+ 	int quirks = 0;
+ 	int err;
+
++	/* Refuse every device except the manually selected tablet Wi-Fi host. */
++	if (!dmi_match(DMI_SYS_VENDOR, "LENOVO") ||
++	    !dmi_match(DMI_PRODUCT_NAME, "80HV") ||
++	    strcmp(dev_name(dev), "INT33BB:00"))
++		return -ENODEV;
++
+ 	device = ACPI_COMPANION(dev);
+-	if (!device)
++	if (!device || !acpi_dev_hid_uid_match(device, "INT33BB", "2"))
+ 		return -ENODEV;
+
+ 	id = dmi_first_match(sdhci_acpi_quirks);
+@@ -835,6 +837,8 @@
+ 		quirks = (long)id->driver_data;
+
+ 	slot = sdhci_acpi_get_slot(device);
++	if (slot != &sdhci_acpi_slot_int_sdio)
++		return -ENODEV;
+
+ 	/* Power on the SDHCI controller and its children */
+ 	acpi_device_fix_up_power_extended(device);
+@@ -916,6 +920,10 @@
+ 			host->mmc->caps2 |= MMC_CAP2_NO_WRITE_PROTECT;
+ 	}
+
++	/* DMA allocation and mode selection happen in sdhci_setup_host(). */
++	if (pio)
++		host->quirks |= SDHCI_QUIRK_BROKEN_DMA | SDHCI_QUIRK_BROKEN_ADMA;
++
+ 	err = sdhci_setup_host(host);
+ 	if (err)
+ 		goto err_free;
+@@ -925,6 +933,14 @@
+ 		if (err)
+ 			goto err_cleanup;
+ 	}
++
++	/* setup_host() populated caps/f_max; registration starts card detection. */
++	if (legacy) {
++		host->mmc->caps &= ~(MMC_CAP_SD_HIGHSPEED | MMC_CAP_UHS);
++		host->mmc->f_max = min(host->mmc->f_max, MIIX_SDIO_MAX_CLOCK_HZ);
++	}
++	dev_info(dev, "manual Wi-Fi diagnostic: legacy=%u pio=%u max_clock=%u\n",
++		 legacy, pio, host->mmc->f_max);
+
+ 	err = __sdhci_add_host(host);
+ 	if (err)
+@@ -1045,9 +1061,8 @@
+
+ static struct platform_driver sdhci_acpi_driver = {
+ 	.driver = {
+-		.name			= "sdhci-acpi",
+-		.probe_type		= PROBE_PREFER_ASYNCHRONOUS,
+-		.acpi_match_table	= sdhci_acpi_ids,
++		.name			= "miix_sdhci_diag",
++		.probe_type		= PROBE_FORCE_SYNCHRONOUS,
+ 		.pm			= pm_ptr(&sdhci_acpi_pm_ops),
+ 	},
+ 	.probe	= sdhci_acpi_probe,
+@@ -1056,6 +1071,6 @@
+
+ module_platform_driver(sdhci_acpi_driver);
+
+-MODULE_DESCRIPTION("Secure Digital Host Controller Interface ACPI driver");
++MODULE_DESCRIPTION("Manual SDIO diagnostic for Lenovo 80HV INT33BB:00 only");
+ MODULE_AUTHOR("Adrian Hunter");
+ MODULE_LICENSE("GPL v2");

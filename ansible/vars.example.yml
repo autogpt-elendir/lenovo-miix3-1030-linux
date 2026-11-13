@@ -1,0 +1,14 @@
+---
+# Copy to an ignored vars.local.yml. Existing, non-root Linux account required.
+miix_user: ""
+
+# Optional office-dashboard profile; credentials stay in the browser/session.
+miix_kiosk_enabled: false
+miix_kiosk_url: ""
+
+# Optional LXQt/X11 policy. Applies after the next graphical login.
+miix_disable_idle_sleep: false
+
+# Optional additions for a 2 GiB tablet. Read docs before enabling.
+miix_kiosk_memory_guard_enabled: false
+miix_swap_enabled: false

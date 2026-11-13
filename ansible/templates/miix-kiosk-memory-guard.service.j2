@@ -1,0 +1,13 @@
+[Unit]
+Description=Recover only the active kiosk after sustained memory growth
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ miix_source_dir }}/scripts/kiosk_memory_guard.py
+RuntimeDirectory=miix-kiosk-memory-guard
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+TimeoutStartSec=25s
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX

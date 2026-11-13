@@ -1,0 +1,11 @@
+[Unit]
+Description=Observe kiosk cgroup memory every fifteen seconds
+
+[Timer]
+OnActiveSec=15s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Unit=miix-kiosk-memory-guard.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,33 @@
+{
+  "ubuntu": "26.04",
+  "kernel": "7.0.0-42-generic",
+  "version": "7.0.0-42.42",
+  "source": "Ubuntu APT package metadata observed on the qualified system",
+  "install_note": "Prefer signed Ubuntu APT repositories; these digests identify the observed artifacts, not a replacement for repository signature verification. Resolve dependencies through APT.",
+  "packages": [
+    {
+      "name": "linux-image-7.0.0-42-generic",
+      "version": "7.0.0-42.42",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/linux-signed/linux-image-7.0.0-42-generic_7.0.0-42.42_amd64.deb",
+      "sha256": "179381704964d6b79c8d2bab2f5d51d8679cb13e9bf51a3293e28f90b708c96e"
+    },
+    {
+      "name": "linux-modules-7.0.0-42-generic",
+      "version": "7.0.0-42.42",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-modules-7.0.0-42-generic_7.0.0-42.42_amd64.deb",
+      "sha256": "af173ab8a9a18ec6f4f450963de4c73ccef4c61bd5c1ab20f7a085b7ca15c9d6"
+    },
+    {
+      "name": "linux-headers-7.0.0-42-generic",
+      "version": "7.0.0-42.42",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-headers-7.0.0-42-generic_7.0.0-42.42_amd64.deb",
+      "sha256": "fe9df1acb734a0dea6351cd50d21179bb616126d2cecea821647e965f4cb1576"
+    },
+    {
+      "name": "linux-headers-7.0.0-42",
+      "version": "7.0.0-42.42",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/linux/linux-headers-7.0.0-42_7.0.0-42.42_all.deb",
+      "sha256": "50b160208f55bfd96ff54b4720dad824e6425afd7443d1ef42381337c80fe0d5"
+    }
+  ]
+}

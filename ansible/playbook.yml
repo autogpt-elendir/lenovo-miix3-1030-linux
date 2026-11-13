@@ -1,0 +1,442 @@
+---
+- name: Configure a qualified Lenovo MIIX 3-1030 after Linux installation
+  hosts: miix
+  gather_facts: true
+  become: true
+  vars:
+    miix_kernel: 7.0.0-42-generic
+    miix_user: ""
+    miix_source_dir: /opt/miix3-1030-linux
+    miix_state_dir: /var/lib/miix3-1030
+    miix_module_path: "/lib/modules/{{ miix_kernel }}/updates/miix_sdhci_diag.ko"
+    miix_kiosk_enabled: false
+    miix_kiosk_url: ""
+    miix_disable_idle_sleep: false
+    miix_kiosk_memory_guard_enabled: false
+    miix_swap_enabled: false
+
+  pre_tasks:
+    - name: Refuse another model, distribution, architecture or kernel
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.system_vendor == 'LENOVO'
+          - ansible_facts.product_name == '80HV'
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_version.startswith('26.04')
+          - ansible_facts.architecture == 'x86_64'
+          - ansible_facts.kernel == miix_kernel
+          - miix_user is match('^[a-z_][a-z0-9_-]*[$]?$')
+          - miix_user != 'root'
+          - not (miix_kiosk_memory_guard_enabled | bool) or (miix_kiosk_enabled | bool)
+          - not (miix_kiosk_enabled | bool) or miix_kiosk_url is match('^https?://[A-Za-z0-9][A-Za-z0-9.:-]*(/[A-Za-z0-9._~:/%+\-]*)?$')
+        fail_msg: >-
+          This recipe qualifies only Ubuntu 26.04 on LENOVO 80HV with kernel
+          7.0.0-42-generic. Set an existing non-root miix_user; optional kiosk
+          URLs must be HTTP(S), without credentials, queries or fragments.
+
+    - name: Read the existing desktop account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ miix_user }}"
+
+    - name: Record the user's dynamic UID, GID and home
+      ansible.builtin.set_fact:
+        miix_user_uid: "{{ ansible_facts.getent_passwd[miix_user][1] }}"
+        miix_user_gid: "{{ ansible_facts.getent_passwd[miix_user][2] }}"
+        miix_user_home: "{{ ansible_facts.getent_passwd[miix_user][4] }}"
+
+    - name: Require a regular desktop account and a conventional home path
+      ansible.builtin.assert:
+        that:
+          - miix_user_uid | int >= 1000
+          - miix_user_home is match('^/[A-Za-z0-9_./-]+$')
+          - miix_user_home != '/root'
+          - ansible_facts.getent_passwd[miix_user][5] not in ['/bin/false', '/usr/sbin/nologin']
+
+    - name: Define the existing user's runtime environment
+      ansible.builtin.set_fact:
+        miix_user_environment:
+          HOME: "{{ miix_user_home }}"
+          XDG_RUNTIME_DIR: "/run/user/{{ miix_user_uid }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ miix_user_uid }}/bus"
+          PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        _miix_recipe_sha256: >-
+          {{ (lookup('file', playbook_dir + '/../profiles/wifi-source-manifest.json')
+          ~ lookup('file', playbook_dir + '/../scripts/build_wifi.py')
+          ~ lookup('file', playbook_dir + '/../scripts/btf_abi.py')
+          ~ lookup('file', playbook_dir + '/../patches/sdhci-miix-controller.patch')) | hash('sha256') }}
+
+    - name: Inspect the additive module and our build receipt
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        checksum_algorithm: sha256
+        follow: false
+      loop:
+        - "{{ miix_module_path }}"
+        - "{{ miix_state_dir }}/wifi-build.json"
+      register: _miix_existing
+
+    - name: Refuse links and an unmanaged pre-existing module
+      ansible.builtin.assert:
+        that:
+          - not (_miix_existing.results[0].stat.islnk | default(false))
+          - not (_miix_existing.results[1].stat.islnk | default(false))
+          - not _miix_existing.results[0].stat.exists or _miix_existing.results[1].stat.exists
+        fail_msg: >-
+          An existing module without this recipe's receipt is not overwritten.
+          Keep the working installation and use diagnostics, or use a clean reinstall.
+
+    - name: Read our previous build receipt
+      ansible.builtin.slurp:
+        src: "{{ miix_state_dir }}/wifi-build.json"
+      register: _miix_receipt_raw
+      when: _miix_existing.results[1].stat.exists
+
+    - name: Decode the previous build receipt
+      ansible.builtin.set_fact:
+        _miix_receipt: "{{ (_miix_receipt_raw.content | b64decode | from_json) if _miix_existing.results[1].stat.exists else {} }}"
+
+    - name: Refuse a modified managed module
+      ansible.builtin.assert:
+        that:
+          - not _miix_existing.results[0].stat.exists or _miix_existing.results[0].stat.checksum == _miix_receipt.get('module_sha256', '')
+        fail_msg: The existing module differs from its receipt; inspect it before replacement.
+
+    - name: Decide whether a new source build is required
+      ansible.builtin.set_fact:
+        _miix_build_needed: >-
+          {{ not _miix_existing.results[0].stat.exists
+          or _miix_receipt.get('recipe_sha256', '') != _miix_recipe_sha256
+          or _miix_receipt.get('kernel', '') != miix_kernel }}
+
+  tasks:
+    - name: Install audio, firmware and qualified build dependencies
+      ansible.builtin.apt:
+        name:
+          - alsa-ucm-conf
+          - alsa-utils
+          - firmware-sof-signed
+          - linux-firmware
+          - linux-firmware-realtek
+          - pipewire
+          - pipewire-pulse
+          - wireplumber
+          - python3
+          - gcc-15
+          - make
+          - "linux-headers-{{ miix_kernel }}"
+          - bpftool
+          - patch
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+        fail_on_autoremove: true
+
+    - name: Create the read-only source installation
+      ansible.builtin.file:
+        path: "{{ miix_source_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install public source files without private inventory or browser data
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../{{ item }}/"
+        dest: "{{ miix_source_dir }}/{{ item }}/"
+        owner: root
+        group: root
+        mode: '0644'
+        directory_mode: '0755'
+      loop: [scripts, profiles, patches]
+      when: not ansible_check_mode
+
+    - name: Build from pinned sources as the desktop user
+      when:
+        - _miix_build_needed | bool
+        - not ansible_check_mode
+      block:
+        - name: Allocate an isolated build parent
+          ansible.builtin.tempfile:
+            state: directory
+            path: /var/tmp
+            prefix: miix3-wifi-build-
+          register: _miix_work_parent
+
+        - name: Assign the build parent to the non-root compiler user
+          ansible.builtin.file:
+            path: "{{ _miix_work_parent.path }}"
+            owner: "{{ miix_user }}"
+            group: "{{ miix_user_gid }}"
+            mode: '0700'
+
+        - name: Run the non-mutating builder preflight
+          become_user: "{{ miix_user }}"
+          ansible.builtin.command:
+            argv: [/usr/bin/python3, "{{ miix_source_dir }}/scripts/build_wifi.py", --check]
+          changed_when: false
+
+        - name: Compile the Wi-Fi controller variant
+          become_user: "{{ miix_user }}"
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/python3
+              - "{{ miix_source_dir }}/scripts/build_wifi.py"
+              - build
+              - --work-dir
+              - "{{ _miix_work_parent.path }}/build"
+          register: _miix_build
+
+        - name: Decode the build result
+          ansible.builtin.set_fact:
+            _miix_build_result: "{{ _miix_build.stdout | from_json }}"
+
+        - name: Inspect the compiled module
+          ansible.builtin.stat:
+            path: "{{ _miix_build_result.module_path }}"
+            checksum_algorithm: sha256
+            follow: false
+          register: _miix_compiled
+
+        - name: Require the expected build identity and integrity
+          ansible.builtin.assert:
+            that:
+              - _miix_build_result.kernel == miix_kernel
+              - _miix_build_result.module_sha256 is match('^[0-9a-f]{64}$')
+              - _miix_build_result.module_path.startswith(_miix_work_parent.path + '/build/')
+              - _miix_build_result.abi_assertions | int > 0
+              - _miix_compiled.stat.isreg
+              - not (_miix_compiled.stat.islnk | default(false))
+              - _miix_compiled.stat.checksum == _miix_build_result.module_sha256
+
+        - name: Create the additive module directory and receipt directory
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+          loop:
+            - "/lib/modules/{{ miix_kernel }}/updates"
+            - "{{ miix_state_dir }}"
+
+        - name: Install the compiled module without replacing stock drivers
+          ansible.builtin.copy:
+            src: "{{ _miix_build_result.module_path }}"
+            dest: "{{ miix_module_path }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0644'
+          notify: Refresh qualified module dependencies
+
+        - name: Save the minimal build receipt for idempotence
+          ansible.builtin.copy:
+            content: >-
+              {{ {'kernel': miix_kernel,
+              'module_sha256': _miix_build_result.module_sha256,
+              'recipe_sha256': _miix_recipe_sha256,
+              'abi_assertions': _miix_build_result.abi_assertions} | to_nice_json }}
+            dest: "{{ miix_state_dir }}/wifi-build.json"
+            owner: root
+            group: root
+            mode: '0644'
+
+    - name: Explain build actions skipped during simulation
+      ansible.builtin.debug:
+        msg: The qualified module would be built from pinned sources; compilation and installation are skipped in check mode.
+      when:
+        - _miix_build_needed | bool
+        - ansible_check_mode
+
+    - name: Create the system helper directory
+      ansible.builtin.file:
+        path: /usr/local/libexec
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install the guarded Wi-Fi controller helper
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/internal_wifi.py"
+        dest: /usr/local/libexec/miix-internal-wifi
+        owner: root
+        group: root
+        mode: '0755'
+      when: not ansible_check_mode
+
+    - name: Install the qualified boot service
+      ansible.builtin.template:
+        src: miix-internal-wifi.service.j2
+        dest: /etc/systemd/system/miix-internal-wifi.service
+        owner: root
+        group: root
+        mode: '0644'
+      register: _miix_wifi_unit
+
+    - name: Refresh the module index before activation
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable the guarded Wi-Fi setup
+      ansible.builtin.systemd_service:
+        name: miix-internal-wifi.service
+        daemon_reload: "{{ _miix_wifi_unit.changed }}"
+        enabled: true
+        state: started
+      when: not ansible_check_mode
+
+    - name: Inspect the existing desktop user's service bus
+      ansible.builtin.stat:
+        path: "/run/user/{{ miix_user_uid }}/bus"
+      register: _miix_user_bus
+
+    - name: Enable stock user audio sockets and the session manager
+      become_user: "{{ miix_user }}"
+      environment: "{{ miix_user_environment }}"
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        scope: user
+        enabled: true
+        state: started
+      loop: [pipewire.socket, pipewire-pulse.socket, wireplumber.service]
+      when:
+        - _miix_user_bus.stat.exists
+        - not ansible_check_mode
+
+    - name: Explain session audio activation
+      ansible.builtin.debug:
+        msg: Open the desktop session, then run the documented audio diagnostics and listen to the synthetic speaker test.
+      when: not _miix_user_bus.stat.exists
+
+    - name: Create optional LXQt and user-service directories
+      ansible.builtin.file:
+        path: "{{ miix_user_home }}/{{ item }}"
+        state: directory
+        owner: "{{ miix_user }}"
+        group: "{{ miix_user_gid }}"
+        mode: '0700'
+      loop: [.config/lxqt, .config/autostart, .config/systemd/user]
+      when: (miix_disable_idle_sleep | bool) or (miix_kiosk_enabled | bool)
+
+    - name: Configure the optional LXQt no-idle-suspend policy
+      community.general.ini_file:
+        path: "{{ miix_user_home }}/.config/lxqt/lxqt-powermanagement.conf"
+        section: General
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        owner: "{{ miix_user }}"
+        group: "{{ miix_user_gid }}"
+        mode: '0600'
+        no_extra_spaces: true
+      loop:
+        - {option: enableIdlenessWatcher, value: 'false'}
+        - {option: idlenessACAction, value: '-1'}
+        - {option: idlenessBatteryAction, value: '-1'}
+        - {option: lock_screen_before_power_actions, value: 'false'}
+      when:
+        - miix_disable_idle_sleep | bool
+        - not ansible_check_mode
+
+    - name: Install the optional display-awake utility
+      ansible.builtin.apt:
+        name: x11-xserver-utils
+        state: present
+      when:
+        - miix_disable_idle_sleep | bool
+        - not ansible_check_mode
+
+    - name: Apply optional X11 screen policy at the next LXQt login
+      ansible.builtin.template:
+        src: miix-display-awake.desktop.j2
+        dest: "{{ miix_user_home }}/.config/autostart/miix-display-awake.desktop"
+        owner: "{{ miix_user }}"
+        group: "{{ miix_user_gid }}"
+        mode: '0600'
+      when:
+        - miix_disable_idle_sleep | bool
+        - not ansible_check_mode
+
+    - name: Install the optional browser
+      ansible.builtin.apt:
+        name: falkon
+        state: present
+      when:
+        - miix_kiosk_enabled | bool
+        - not ansible_check_mode
+
+    - name: Create the dedicated optional browser profile
+      ansible.builtin.file:
+        path: "{{ miix_user_home }}/.config/falkon/profiles/miix-kiosk"
+        state: directory
+        owner: "{{ miix_user }}"
+        group: "{{ miix_user_gid }}"
+        mode: '0700'
+      when:
+        - miix_kiosk_enabled | bool
+        - not ansible_check_mode
+
+    - name: Avoid reopening old browser tabs on kiosk launch
+      community.general.ini_file:
+        path: "{{ miix_user_home }}/.config/falkon/profiles/miix-kiosk/settings.ini"
+        section: Web-URL-Settings
+        option: afterLaunch
+        value: '0'
+        owner: "{{ miix_user }}"
+        group: "{{ miix_user_gid }}"
+        mode: '0600'
+        no_extra_spaces: true
+      when:
+        - miix_kiosk_enabled | bool
+        - not ansible_check_mode
+
+    - name: Install the optional dashboard unit
+      ansible.builtin.template:
+        src: miix-kiosk.service.j2
+        dest: "{{ miix_user_home }}/.config/systemd/user/miix-kiosk.service"
+        owner: "{{ miix_user }}"
+        group: "{{ miix_user_gid }}"
+        mode: '0600'
+      when:
+        - miix_kiosk_enabled | bool
+        - not ansible_check_mode
+
+    - name: Start the optional kiosk only from the graphical LXQt session
+      ansible.builtin.template:
+        src: miix-kiosk.desktop.j2
+        dest: "{{ miix_user_home }}/.config/autostart/miix-kiosk.desktop"
+        owner: "{{ miix_user }}"
+        group: "{{ miix_user_gid }}"
+        mode: '0600'
+      when:
+        - miix_kiosk_enabled | bool
+        - not ansible_check_mode
+
+    - name: Load the optional user unit without starting a browser from SSH
+      become_user: "{{ miix_user }}"
+      environment: "{{ miix_user_environment }}"
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+        scope: user
+      when:
+        - miix_kiosk_enabled | bool
+        - _miix_user_bus.stat.exists
+        - not ansible_check_mode
+
+    - name: Configure optional swap
+      ansible.builtin.import_tasks: tasks/swap.yml
+      when: miix_swap_enabled | bool
+
+    - name: Configure the optional kiosk memory guard
+      ansible.builtin.import_tasks: tasks/kiosk_memory.yml
+      when:
+        - miix_kiosk_enabled | bool
+        - miix_kiosk_memory_guard_enabled | bool
+
+  handlers:
+    - name: Refresh qualified module dependencies
+      ansible.builtin.command:
+        argv: [/usr/sbin/depmod, -a, "{{ miix_kernel }}"]
+      changed_when: true

@@ -1,0 +1,20 @@
+[Unit]
+Description=Optional MIIX dashboard browser
+After=graphical-session.target
+ConditionEnvironment=DISPLAY
+
+[Service]
+Type=simple
+Environment=HOME={{ miix_user_home }}
+UMask=0077
+ExecStartPre=/usr/bin/nm-online --quiet --timeout=30
+ExecStart=/usr/bin/falkon --profile=miix-kiosk --current-tab --no-extensions --fullscreen "{{ miix_kiosk_url | replace('%', '%%') }}"
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+KillMode=mixed
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=graphical-session.target

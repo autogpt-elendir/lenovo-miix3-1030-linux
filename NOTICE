@@ -1,0 +1,12 @@
+Linux kernel changes in patches/ derive from Linux v7.0, commit
+028ef9c96e96197026887c0f092424679298aae8, under GPL-2.0-only.
+Original source copyright and authors remain in the fetched C/header files.
+The SDHCI ACPI driver lists Adrian Hunter as its author. Local changes restrict
+manual binding to the Lenovo 80HV Wi-Fi controller and select legacy SDIO timing.
+See profiles/wifi-source-manifest.json for upstream URLs and SHA-256 digests.
+
+Project scripts, tests and configuration are distributed under GPL-2.0-only.
+No Windows driver, proprietary firmware, precompiled kernel module, private
+browser profile, network password or personal Home Assistant configuration is
+included. Firmware is installed through the operating system package manager
+with its own upstream notices and licenses.
